@@ -8,6 +8,7 @@
 #endif
 
 #include "rocm_gdr_ep.h"
+#include "gdr_copy_md.h"
 #include "rocm_gdr_iface.h"
 
 #include <uct/base/uct_log.h>
@@ -41,14 +42,28 @@ ucs_status_t uct_rocm_gdr_ep_put_short(uct_ep_h tl_ep, const void *buffer,
                                        unsigned length, uint64_t remote_addr,
                                        uct_rkey_t rkey)
 {
+    uct_gdr_copy_key_t *gdr_copy_key = (uct_gdr_copy_key_t *) rkey;
+    size_t bar_offset;
     int ret;
 
     if (ucs_likely(length)) {
-        ret = gdr_copy_to_bar((void *)remote_addr, buffer, length);
+        bar_offset = remote_addr - gdr_copy_key->vaddr;
+#if HAVE_DECL_GDR_COPY_TO_MAPPING
+        ret = gdr_copy_to_mapping(gdr_copy_key->mh,
+                                  UCS_PTR_BYTE_OFFSET(gdr_copy_key->bar_ptr,
+                                                      bar_offset),
+                                  buffer, length);
+        if (ret) {
+            ucs_error("gdr_copy_to_mapping failed. ret:%d", ret);
+            return UCS_ERR_IO_ERROR;
+        }
+#else
+        ret = gdr_copy_to_bar(gdr_copy_key->bar_ptr + bar_offset, buffer, length);
         if (ret) {
             ucs_error("gdr_copy_to_bar failed. ret:%d", ret);
             return UCS_ERR_IO_ERROR;
         }
+#endif
     }
 
     UCT_TL_EP_STAT_OP(ucs_derived_of(tl_ep, uct_base_ep_t), PUT, SHORT, length);
@@ -61,14 +76,28 @@ ucs_status_t uct_rocm_gdr_ep_get_short(uct_ep_h tl_ep, void *buffer,
                                        unsigned length, uint64_t remote_addr,
                                        uct_rkey_t rkey)
 {
+    uct_gdr_copy_key_t *gdr_copy_key = (uct_gdr_copy_key_t *) rkey;
+    size_t bar_offset;
     int ret;
 
     if (ucs_likely(length)) {
-        ret = gdr_copy_from_bar(buffer, (void *)remote_addr, length);
+        bar_offset = remote_addr - gdr_copy_key->vaddr;
+#if HAVE_DECL_GDR_COPY_TO_MAPPING
+        ret = gdr_copy_from_mapping(gdr_copy_key->mh, buffer,
+                                    UCS_PTR_BYTE_OFFSET(gdr_copy_key->bar_ptr,
+                                                        bar_offset),
+                                    length);
+        if (ret) {
+            ucs_error("gdr_copy_from_mapping failed. ret:%d", ret);
+            return UCS_ERR_IO_ERROR;
+        }
+#else
+        ret = gdr_copy_from_bar(buffer, gdr_copy_key->bar_ptr + bar_offset, length);
         if (ret) {
             ucs_error("gdr_copy_from_bar failed. ret:%d", ret);
             return UCS_ERR_IO_ERROR;
         }
+#endif
     }
 
     UCT_TL_EP_STAT_OP(ucs_derived_of(tl_ep, uct_base_ep_t), GET, SHORT, length);
